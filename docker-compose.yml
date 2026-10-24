@@ -1,0 +1,18 @@
+services:
+  opencode-shim:
+    build: .
+    image: ghcr.io/OWNER/opencode-shim:latest
+    container_name: opencode-shim
+    restart: unless-stopped
+    ports:
+      - "18001:18001"
+    environment:
+      SHIM_TOKEN: "change-me"
+      SHIM_PROXY: ""
+      SHIM_CONCURRENCY: "1"
+    mem_limit: 1g
+    volumes:
+      - shim-data:/data
+
+volumes:
+  shim-data:
