@@ -7,6 +7,20 @@
 这个镜像里装了官方 `opencode` 客户端，每收到一条 `/v1/chat/completions`
 就真正调用一次 `opencode run --format json`，再把事件流转换成 OpenAI 格式返回。
 
+## 能力
+
+- `POST /v1/chat/completions`：文本对话
+- `POST /v1/completions`：旧版补全接口（内部转 chat）
+- `GET /v1/models`、`GET /v1/models/{id}`
+- **工具调用（function calling）**：`tools` / `tool_choice` / `functions` 都支持，
+  返回标准 `tool_calls` + `finish_reason: "tool_calls"`，也接受 `role: "tool"` 结果回填
+- **流式**：`stream: true`，工具调用同样以 `delta.tool_calls` 下发，
+  支持 `stream_options.include_usage`
+
+工具调用是**模拟实现**：工具 schema 会写进提示词，模型按约定输出 JSON 信封，
+网关再翻译成 OpenAI 的 `tool_calls`。所以它对外协议是标准的，但内部依赖模型遵守约定；
+遇到模型说"没有这个工具"时网关会自动重试一次并纠正。
+
 ## 快速开始
 
 ```bash
@@ -33,7 +47,7 @@ docker exec opencode-shim cat /data/token
 | `SHIM_BIND` | `0.0.0.0` | 监听地址 |
 | `SHIM_TOKEN` | 空 | API token；为空则读/生成 `/data/token` |
 | `SHIM_TOKEN_FILE` | `/data/token` | token 文件路径 |
-| `SHIM_PROXY` | 空 | 给客户端用的代理，如 `socks5h://user:pass@host:port`；为空则直连 |
+| `SHIM_PROXY` | 空 | 给客户端用的代理，如 `http://user:pass@host:port`；为空则直连。**必须用 http/socks5（非 socks5h）**，Node 的 fetch 不支持 `socks5h://` |
 | `SHIM_TIMEOUT` | `300` | 单次请求超时（秒） |
 | `SHIM_CONCURRENCY` | `1` | 同时运行的客户端进程数，内存小就别调高 |
 | `SHIM_WORKDIR` | `/tmp/opencode-work` | 客户端工作目录 |

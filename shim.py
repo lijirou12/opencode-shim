@@ -301,6 +301,15 @@ class Handler(BaseHTTPRequestHandler):
         with SEM:
             try:
                 result = run_cli(model, prompt)
+                if tools:
+                    calls, text = parse_tool_calls(result["text"])
+                    if not calls and re.search(r"(no|not|没有|无法|不可)[^\n]{0,30}(tool|工具)", text, re.I):
+                        nudge = prompt + (
+                            "\n\nThe tools listed above ARE available in this environment. "
+                            "You must call the matching tool now: reply with ONLY the JSON object "
+                            '{"tool_calls":[{"name":"...","arguments":{...}}]} and no other text.'
+                        )
+                        result = run_cli(model, nudge)
             except subprocess.TimeoutExpired:
                 return self._error(504, "upstream timeout", "timeout_error")
             except Exception as exc:  # noqa: BLE001
