@@ -115,7 +115,7 @@ export function buildTools(clientTools, { full = true } = {}) {
   // 128 items is a hard upstream limit; official tools win, caller tools fill
   // the rest in order.
   const room = Math.max(0, MAX_TOOLS - wanted.length);
-  const tools = [...wanted, ...client.slice(0, room)];
+  const tools = [...client.slice(0, room), ...wanted];
 
   return { tools, rename, placeholderNames };
 }
@@ -138,6 +138,21 @@ export function appendSystemNote(body, note) {
   } else {
     body.messages.unshift({ role: "system", content: note });
   }
+}
+
+/**
+ * Thinking-mode backends require assistant turns to echo reasoning_content.
+ * Clients typically drop it, which makes the model loop on tool calls and end
+ * the turn with an empty answer. Inject a non-empty placeholder (same fix as
+ * 9router's reasoningContentInjector).
+ */
+export function injectReasoningPlaceholder(messages) {
+  if (!Array.isArray(messages)) return messages;
+  return messages.map((msg) => {
+    if (msg?.role !== "assistant") return msg;
+    if (typeof msg.reasoning_content === "string" && msg.reasoning_content.length > 0) return msg;
+    return { ...msg, reasoning_content: " " };
+  });
 }
 
 /** Map sent tool names back to the caller's names. */

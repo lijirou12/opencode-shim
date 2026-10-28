@@ -18,6 +18,7 @@ import {
   appendSystemNote,
   restoreName,
   isPlaceholderCall,
+  injectReasoningPlaceholder,
   OFFICIAL_NAMES,
 } from "./src/fingerprint.mjs";
 
@@ -173,6 +174,76 @@ function mergeToolCall(acc, delta) {
   return entry;
 }
 
+async function callUpstream(upstreamBody, session, hooks = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  let upstreamRes;
+  try {
+    upstreamRes = await tlsFetch(`${UPSTREAM}/inference/openai/v1/chat/completions`, {
+      method: "POST",
+      headers: upstreamHeaders(session, true),
+      body: JSON.stringify(upstreamBody),
+      signal: controller.signal,
+    }, { timeoutMs: TIMEOUT_MS, proxyUrl: PROXY });
+  } catch (error) {
+    clearTimeout(timer);
+    return {
+      error: {
+        status: 504,
+        message: error?.name === "AbortError" ? "upstream timeout" : error.message,
+        type: "timeout_error",
+      },
+    };
+  }
+
+  if (!upstreamRes.ok) {
+    clearTimeout(timer);
+    const text = await upstreamRes.text().catch(() => "");
+    let message = text.slice(0, 500);
+    let type = "upstream_error";
+    try {
+      const parsed = JSON.parse(text);
+      message = parsed?.error?.message || message;
+      type = parsed?.error?.type || type;
+    } catch { /* keep raw text */ }
+    return { error: { status: upstreamRes.status, message, type } };
+  }
+
+  const out = { content: "", reasoning: "", calls: [], finish: null, usage: null };
+  try {
+    for await (const data of sseEvents(upstreamRes.body)) {
+      if (data === "[DONE]") break;
+      let event;
+      try {
+        event = JSON.parse(data);
+      } catch {
+        continue;
+      }
+      if (event.usage) out.usage = event.usage;
+      const choice = event.choices?.[0];
+      if (!choice) continue;
+      const delta = choice.delta || {};
+      if (typeof delta.content === "string" && delta.content) {
+        out.content += delta.content;
+        hooks.onContent?.(delta.content);
+      }
+      if (typeof delta.reasoning_content === "string" && delta.reasoning_content) {
+        out.reasoning += delta.reasoning_content;
+        hooks.onReasoning?.(delta.reasoning_content);
+      }
+      if (Array.isArray(delta.tool_calls)) {
+        for (const call of delta.tool_calls) mergeToolCall(out.calls, call);
+      }
+      if (choice.finish_reason) out.finish = choice.finish_reason;
+    }
+  } catch (error) {
+    clearTimeout(timer);
+    return { error: { status: 502, message: error.message, type: "upstream_error" } };
+  }
+  clearTimeout(timer);
+  return out;
+}
+
 async function handleChat(req, res, rawBody) {
   let body;
   try {
@@ -206,35 +277,7 @@ async function handleChat(req, res, rawBody) {
 
   injectSystem(upstream);
   appendSystemNote(upstream, placeholderNote(placeholderNames));
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  let upstreamRes;
-  try {
-    upstreamRes = await tlsFetch(`${UPSTREAM}/inference/openai/v1/chat/completions`, {
-      method: "POST",
-      headers: upstreamHeaders(session, true),
-      body: JSON.stringify(upstream),
-      signal: controller.signal,
-    }, { timeoutMs: TIMEOUT_MS, proxyUrl: PROXY });
-  } catch (error) {
-    clearTimeout(timer);
-    const message = error?.name === "AbortError" ? "upstream timeout" : error.message;
-    return sendError(res, 504, message, "timeout_error");
-  }
-
-  if (!upstreamRes.ok) {
-    clearTimeout(timer);
-    const text = await upstreamRes.text().catch(() => "");
-    let message = text.slice(0, 500);
-    let type = "upstream_error";
-    try {
-      const parsed = JSON.parse(text);
-      message = parsed?.error?.message || message;
-      type = parsed?.error?.type || type;
-    } catch { /* keep raw text */ }
-    return sendError(res, upstreamRes.status, message, type);
-  }
+  upstream.messages = injectReasoningPlaceholder(upstream.messages);
 
   const id = "chatcmpl-" + crypto.randomUUID().replace(/-/g, "");
   const created = Math.floor(Date.now() / 1000);
@@ -261,76 +304,96 @@ async function handleChat(req, res, rawBody) {
     })}\n\n`);
   };
 
-  let content = "";
-  let reasoning = "";
-  let finish = null;
-  let usage = null;
-  const calls = [];
-
-  try {
-    for await (const data of sseEvents(upstreamRes.body)) {
-      if (data === "[DONE]") break;
-      let event;
-      try {
-        event = JSON.parse(data);
-      } catch {
-        continue;
-      }
-      if (event.usage) usage = event.usage;
-      const choice = event.choices?.[0];
-      if (!choice) continue;
-      const delta = choice.delta || {};
-      if (typeof delta.content === "string" && delta.content) {
-        content += delta.content;
-        if (wantsStream) {
-          startStream();
-          sendChunk({ content: delta.content });
-        }
-      }
-      if (typeof delta.reasoning_content === "string" && delta.reasoning_content) {
-        reasoning += delta.reasoning_content;
-        if (wantsStream) {
-          startStream();
-          sendChunk({ reasoning_content: delta.reasoning_content });
-        }
-      }
-      if (Array.isArray(delta.tool_calls)) {
-        for (const call of delta.tool_calls) {
-          const merged = mergeToolCall(calls, call);
-          if (merged.function.name) {
-            merged.function.name = restoreName(merged.function.name, rename);
-          }
-        }
-      }
-      if (choice.finish_reason) finish = choice.finish_reason;
+  const hooks = wantsStream
+    ? {
+      onContent: (text) => { startStream(); sendChunk({ content: text }); },
+      onReasoning: (text) => { startStream(); sendChunk({ reasoning_content: text }); },
     }
-  } catch (error) {
-    clearTimeout(timer);
-    if (!streamStarted) return sendError(res, 502, error.message, "upstream_error");
-    res.end();
-    return;
-  }
-  clearTimeout(timer);
+    : {};
 
-  const realCalls = calls.filter((call) => call && !isPlaceholderCall(call.function.name, placeholderNames));
-  const finishReason = realCalls.length ? "tool_calls" : (finish || "stop");
+  let result = await callUpstream(upstream, session, hooks);
+  if (result.error) {
+    if (streamStarted) { res.end(); return; }
+    return sendError(res, result.error.status, result.error.message, result.error.type);
+  }
+
+  const clientNames = tools
+    .map((t) => t.function?.name)
+    .filter((name) => name && !placeholderNames.includes(name));
+
+  const realCalls = () => result.calls.filter(
+    (call) => call?.function?.name && !isPlaceholderCall(call.function.name, placeholderNames)
+  );
+
+  // The model sometimes reaches for one of the harness declarations instead of
+  // the caller's tools. Those cannot run here, and dropping them silently ends
+  // the turn with an empty answer — retry once with an explicit correction.
+  if (!result.content && realCalls().length === 0 && result.calls.length > 0) {
+    const rejected = result.calls.filter((c) => c?.function?.name);
+    const correction = rejected.map((call) => ({
+      role: "tool",
+      tool_call_id: call.id || "call_placeholder",
+      name: call.function.name,
+      content:
+        `Tool "${call.function.name}" is a harness placeholder and is not available here. ` +
+        (clientNames.length
+          ? `Use one of the client's tools instead: ${clientNames.join(", ")}.`
+          : "Answer the user directly in text."),
+    }));
+    const retryBody = {
+      ...upstream,
+      messages: [
+        ...upstream.messages,
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: rejected.map((call, index) => ({
+            id: call.id || `call_${index}`,
+            type: "function",
+            function: call.function,
+          })),
+        },
+        ...correction,
+      ],
+    };
+    const retried = await callUpstream(retryBody, session, hooks);
+    if (!retried.error) {
+      result = {
+        ...retried,
+        content: retried.content || result.content,
+        reasoning: retried.reasoning || result.reasoning,
+      };
+    }
+  }
+
+  const calls = realCalls();
+  // Still placeholder-only after the correction: never end the turn silently.
+  if (!result.content && calls.length === 0 && result.calls.length > 0) {
+    const names = [...new Set(result.calls.map((c) => c?.function?.name).filter(Boolean))];
+    result.content =
+      `[gateway] The model tried to call the harness placeholder tool(s) ${names.join(", ")}, ` +
+      "which this gateway cannot execute. Provide the matching tool from your client " +
+      "(for example a web_search tool) and retry.";
+    result.finish = "stop";
+  }
+  const finishReason = calls.length ? "tool_calls" : (result.finish || "stop");
 
   if (!wantsStream) {
-    const message = { role: "assistant", content: content || null };
-    if (reasoning) message.reasoning_content = reasoning;
-    if (realCalls.length) message.tool_calls = realCalls;
+    const message = { role: "assistant", content: result.content || null };
+    if (result.reasoning) message.reasoning_content = result.reasoning;
+    if (calls.length) message.tool_calls = calls;
     return sendJson(res, 200, {
       id, object: "chat.completion", created, model,
       choices: [{ index: 0, message, finish_reason: finishReason, logprobs: null }],
-      usage: usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      usage: result.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
       system_fingerprint: "opencode-gateway-" + VERSION,
     });
   }
 
   startStream();
-  if (realCalls.length) {
+  if (calls.length) {
     sendChunk({
-      tool_calls: realCalls.map((call, index) => ({
+      tool_calls: calls.map((call, index) => ({
         index,
         id: call.id || `call_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`,
         type: "function",
@@ -342,7 +405,7 @@ async function handleChat(req, res, rawBody) {
   if (wantUsage) {
     res.write(`data: ${JSON.stringify({
       id, object: "chat.completion.chunk", created, model,
-      choices: [], usage: usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      choices: [], usage: result.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
     })}\n\n`);
   }
   res.write("data: [DONE]\n\n");
