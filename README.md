@@ -30,7 +30,7 @@ docker run -d --name opencode-shim \
   -e SHIM_PROXY=socks5h://user:pass@proxy-host:27507 \
   --memory=1g \
   -v opencode-shim-data:/data \
-  ghcr.io/OWNER/opencode-shim:latest
+  ghcr.io/lijirou12/opencode-shim:latest
 ```
 
 不设 `SHIM_TOKEN` 时，首次启动会生成一个 token 并写入容器内 `/data/token`：

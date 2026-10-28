@@ -1,7 +1,7 @@
 services:
   opencode-shim:
     build: .
-    image: ghcr.io/OWNER/opencode-shim:latest
+    image: ghcr.io/lijirou12/opencode-shim:latest
     container_name: opencode-shim
     restart: unless-stopped
     ports:
