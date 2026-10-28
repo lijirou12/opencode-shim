@@ -1,0 +1,17 @@
+{
+  "name": "opencode-gateway",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenAI-compatible gateway for the OpenCode free tier",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "wreq-js": "^3.2.0"
+  }
+}

@@ -1,36 +1,28 @@
-# OpenAI-compatible gateway that drives the official opencode CLI.
-# Free-tier requests must come from the official client, so we ship it inside.
+# OpenAI-compatible gateway for the OpenCode free tier.
+# Calls the inference API directly; no CLI subprocess.
 FROM node:22-bookworm-slim
 
-ARG OPENCODE_VERSION=1.19.0
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update \
- && apt-get install -y --no-install-recommends python3 ca-certificates git curl \
- && rm -rf /var/lib/apt/lists/*
-
-RUN npm install -g "opencode-ai@${OPENCODE_VERSION}" \
- && npm cache clean --force \
- && opencode --version
-
-RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin shim \
- && mkdir -p /app /data /tmp/opencode-work \
- && chown -R shim:shim /app /data /tmp/opencode-work
-
-COPY --chown=shim:shim shim.py /app/shim.py
-
-ENV SHIM_PORT=18001 \
+ENV NODE_ENV=production \
+    SHIM_PORT=18001 \
     SHIM_BIND=0.0.0.0 \
-    SHIM_TOKEN_FILE=/data/token \
-    SHIM_WORKDIR=/tmp/opencode-work \
-    SHIM_CONCURRENCY=1 \
-    HOME=/home/shim
+    SHIM_UPSTREAM=https://opencode.ai \
+    SHIM_TIMEOUT=300
 
-USER shim
+WORKDIR /app
+
+COPY package.json ./
+RUN npm install --omit=dev --no-audit --no-fund \
+ && npm cache clean --force
+
+COPY server.mjs ./
+COPY src ./src
+
+RUN mkdir -p /tmp/opencode-work && chown -R node:node /app /tmp/opencode-work
+USER node
+
 EXPOSE 18001
-VOLUME ["/data"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD python3 -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:18001/health',timeout=4)"
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.SHIM_PORT||18001)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-CMD ["python3", "/app/shim.py"]
+CMD ["node", "server.mjs"]

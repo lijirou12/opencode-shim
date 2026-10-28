@@ -1,18 +1,13 @@
 services:
-  opencode-shim:
-    build: .
+  opencode-gateway:
     image: ghcr.io/lijirou12/opencode-shim:latest
-    container_name: opencode-shim
+    container_name: opencode-gateway
     restart: unless-stopped
     ports:
       - "18001:18001"
     environment:
-      SHIM_TOKEN: "change-me"
+      SHIM_TOKEN: "change-me-to-a-long-random-string"
       SHIM_PROXY: ""
-      SHIM_CONCURRENCY: "1"
-    mem_limit: 1g
-    volumes:
-      - shim-data:/data
-
-volumes:
-  shim-data:
+      SHIM_TIMEOUT: "300"
+      SHIM_UPSTREAM: "https://opencode.ai"
+    mem_limit: 512m
