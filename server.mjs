@@ -62,10 +62,23 @@ function upstreamHeaders(session, stream = true) {
   };
 }
 
+const MODEL_ALIASES = new Map();
+for (const pair of (process.env.SHIM_MODEL_ALIASES || "").split(",")) {
+  const [from, to] = pair.split("=").map((s) => s?.trim());
+  if (from && to) MODEL_ALIASES.set(from, to);
+}
+// Callers sometimes expose the free model under a friendlier name.
+for (const [from, to] of [
+  ["hermes-deepseek-v4-pro", "deepseek-v4.1-flash-free"],
+  ["deepseek-v4.1-flash", "deepseek-v4.1-flash-free"],
+]) {
+  if (!MODEL_ALIASES.has(from)) MODEL_ALIASES.set(from, to);
+}
+
 function resolveModel(model) {
   let m = String(model || "big-pickle").trim();
   if (m.startsWith("opencode/")) m = m.slice("opencode/".length);
-  return m;
+  return MODEL_ALIASES.get(m) || m;
 }
 
 let modelCache = { at: 0, data: null };
