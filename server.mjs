@@ -30,6 +30,13 @@ const UPSTREAM = (process.env.SHIM_UPSTREAM || "https://opencode.ai").replace(/\
 const PROXY = (process.env.SHIM_PROXY || "").trim();
 const TIMEOUT_MS = Number(process.env.SHIM_TIMEOUT || 300) * 1000;
 const UA = process.env.SHIM_UA || "opencode/latest/2.1.4/cli";
+const PROJECT_HASH = crypto.createHash("sha1").update(`directory:${process.env.SHIM_WORKDIR || process.cwd()}`).digest("hex");
+const TRACE_ROOT = crypto.randomBytes(16).toString("hex");
+function traceHeaders() {
+  const span = crypto.randomBytes(8).toString("hex");
+  const parent = crypto.randomBytes(8).toString("hex");
+  return { b3: `${TRACE_ROOT}-${span}-1-${parent}`, traceparent: `00-${TRACE_ROOT}-${span}-01` };
+}
 
 if (!TOKEN) {
   console.error("[gateway] SHIM_TOKEN is required");
@@ -56,9 +63,11 @@ function upstreamHeaders(session, stream = true) {
     "x-opencode-client": "cli",
     "x-opencode-request": `msg_${crypto.randomUUID().replace(/-/g, "")}`,
     "x-opencode-session": session,
+    "x-opencode-session-id": session,
     "x-session-id": session,
     "x-session-affinity": session,
-    "x-opencode-project": "global",
+    "x-opencode-project": PROJECT_HASH,
+    ...traceHeaders(),
     Accept: stream ? "text/event-stream" : "*/*",
   };
 }

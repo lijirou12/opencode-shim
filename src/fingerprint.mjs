@@ -1,13 +1,12 @@
 import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import os from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Optional GA 2.1.4 prompt asset; mount/provide the captured exact template at
 // this path when available. Do not claim the free-tier body is exact without it.
-const TEMPLATE_FILE = join(__dirname, "agent-template.txt");
+const TEMPLATE_FILE = join(__dirname, "agent-preamble.txt");
 const AGENT_TEMPLATE = existsSync(TEMPLATE_FILE)
   ? readFileSync(TEMPLATE_FILE, "utf8").trim()
   : "";
@@ -29,7 +28,7 @@ export function envPrompt() {
     `  Workspace root folder: ${cwd}`,
     "  Is directory a git repo: no",
     `  Platform: ${process.platform}`,
-    `  Prefer ${join(os.tmpdir(), "opencode")} over generic system temporary directories such as ${os.tmpdir()}; it is pre-created and approved for external access.`,
+    `  Prefer /tmp/opencode over generic system temporary directories such as /tmp; it is pre-created and approved for external access.`,
     "</env>",
   ].join("\n");
   return AGENT_TEMPLATE ? `${AGENT_TEMPLATE}\n\n${block}` : block;
