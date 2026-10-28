@@ -6,11 +6,7 @@ const MASK = (1n << 48n) - 1n;
 let lastTs = 0;
 let counter = 0;
 
-/**
- * OpenCode session ids are `ses_` + 12 hex chars of a descending 48-bit
- * timestamp/counter + 14 base62 random chars. Upstream decodes the timestamp
- * and rejects ids whose time is not current, so mint with Date.now().
- */
+/** Mint the measured OpenCode-style timestamp/session id shape. */
 export function generateSessionId(ts = Date.now()) {
   if (ts !== lastTs) {
     lastTs = ts;
@@ -26,38 +22,31 @@ export function generateSessionId(ts = Date.now()) {
   return `ses_${prefix}${suffix}`;
 }
 
-const TTL_MS = Number(process.env.SHIM_SESSION_TTL_MS || 10 * 60 * 1000);
-const MAX_SESSIONS = 2000;
-const store = new Map();
+/** A fresh request-scoped id is required by this upstream lane. */
+const sessionStore = new Map();
+const SESSION_TTL_MS = Number(process.env.SHIM_SESSION_TTL_MS || 2 * 60 * 60 * 1000);
+const MAX_SESSIONS = 5000;
 
-function keyOf(body) {
-  const explicit = body?.prompt_cache_key || body?.session_id || body?.conversation_id;
-  if (typeof explicit === "string" && explicit.trim()) return "k:" + explicit.trim().slice(0, 200);
-  const seed = JSON.stringify([
-    body?.model || "",
-    Array.isArray(body?.messages) ? body.messages.slice(0, 2) : body?.input || "",
-  ]);
-  return "h:" + crypto.createHash("sha256").update(seed).digest("hex").slice(0, 32);
-}
-
-/** Stable session per conversation, refreshed once it gets old. */
-export function sessionFor(body) {
-  const key = keyOf(body);
+/** Keep one valid upstream session stable per downstream conversation. */
+export function sessionFor(body = {}) {
+  const explicit = body.prompt_cache_key || body.session_id || body.conversation_id;
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  const conversation = messages
+    .filter((message) => message?.role === "user")
+    .slice(0, 1)
+    .map((message) => message?.content ?? "");
+  const seed = typeof explicit === "string" && explicit.trim()
+    ? explicit.trim()
+    : JSON.stringify([body.model || "", conversation]);
+  const key = seed.slice(0, 512);
   const now = Date.now();
-  const hit = store.get(key);
-  if (hit && now - hit.created < TTL_MS) {
+  const hit = sessionStore.get(key);
+  if (hit && now - hit.lastUsed < SESSION_TTL_MS) {
     hit.lastUsed = now;
     return hit.id;
   }
   const id = generateSessionId(now);
-  if (store.size >= MAX_SESSIONS) store.delete(store.keys().next().value);
-  store.set(key, { id, created: now, lastUsed: now });
+  if (sessionStore.size >= MAX_SESSIONS) sessionStore.delete(sessionStore.keys().next().value);
+  sessionStore.set(key, { id, lastUsed: now });
   return id;
 }
-
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of store) {
-    if (now - entry.lastUsed > TTL_MS * 2) store.delete(key);
-  }
-}, 60_000).unref?.();

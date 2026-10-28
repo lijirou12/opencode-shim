@@ -29,7 +29,7 @@ const TOKEN = (process.env.SHIM_TOKEN || "").trim();
 const UPSTREAM = (process.env.SHIM_UPSTREAM || "https://opencode.ai").replace(/\/+$/, "");
 const PROXY = (process.env.SHIM_PROXY || "").trim();
 const TIMEOUT_MS = Number(process.env.SHIM_TIMEOUT || 300) * 1000;
-const UA = process.env.SHIM_UA || "opencode/latest/2.0.26/cli";
+const UA = process.env.SHIM_UA || "opencode/latest/2.1.4/cli";
 
 if (!TOKEN) {
   console.error("[gateway] SHIM_TOKEN is required");
@@ -55,7 +55,6 @@ function upstreamHeaders(session, stream = true) {
     "User-Agent": UA,
     "x-opencode-client": "cli",
     "x-opencode-session": session,
-    "x-opencode-session-id": session,
     "x-session-id": session,
     "x-session-affinity": session,
     "x-opencode-project": "global",
