@@ -29,8 +29,7 @@ export function envPrompt() {
     `  Workspace root folder: ${cwd}`,
     "  Is directory a git repo: no",
     `  Platform: ${process.platform}`,
-    `  Prefer ${os.tmpdir()}/opencode over generic system temporary directories such as ${os.tmpdir()}; it is pre-created and approved for external access.`,
-    `  Today's date: ${new Date().toDateString()}`,
+    `  Prefer ${join(os.tmpdir(), "opencode")} over generic system temporary directories such as ${os.tmpdir()}; it is pre-created and approved for external access.`,
     "</env>",
   ].join("\n");
   return AGENT_TEMPLATE ? `${AGENT_TEMPLATE}\n\n${block}` : block;

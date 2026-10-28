@@ -54,6 +54,7 @@ function upstreamHeaders(session, stream = true) {
     Authorization: "Bearer public",
     "User-Agent": UA,
     "x-opencode-client": "cli",
+    "x-opencode-request": `msg_${crypto.randomUUID().replace(/-/g, "")}`,
     "x-opencode-session": session,
     "x-session-id": session,
     "x-session-affinity": session,

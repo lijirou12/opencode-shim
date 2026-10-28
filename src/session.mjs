@@ -1,10 +1,11 @@
 import crypto from "node:crypto";
 
 const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-const MASK = (1n << 48n) - 1n;
 
 let lastTs = 0;
 let counter = 0;
+const SESSION_COUNTER_MAX = 16;
+const SESSION_PREFIX_MASK = (1n << 48n) - 1n;
 
 /** Mint the measured OpenCode-style timestamp/session id shape. */
 export function generateSessionId(ts = Date.now()) {
@@ -12,8 +13,8 @@ export function generateSessionId(ts = Date.now()) {
     lastTs = ts;
     counter = 0;
   }
-  counter += 1;
-  const prefix = (~(BigInt(ts) * 0x1000n + BigInt(counter)) & MASK)
+  counter = (counter % SESSION_COUNTER_MAX) + 1;
+  const prefix = (~(BigInt(ts) * 0x1000n + BigInt(counter)) & SESSION_PREFIX_MASK)
     .toString(16)
     .padStart(12, "0");
   const bytes = crypto.randomBytes(14);
